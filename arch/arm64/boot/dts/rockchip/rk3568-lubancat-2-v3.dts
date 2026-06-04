@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+* Copyright (c) 2020 Rockchip Electronics Co., Ltd.
+*
+*/
+
+#include "rk3568-lubancat-2-v2.dts"
+
+/ {
+	model = "EmbedFire LubanCat-2";
+	compatible = "embedfire,lubancat-2-v3", "rockchip,rk3568";
+};
+
+&i2c0 {
+	hym8563: hym8563@51 {
+		compatible = "haoyu,hym8563";
+		status = "okay";
+		reg = <0x51>;
+		#clock-cells = <0>;
+		clock-frequency = <32768>;
+		clock-output-names = "hym8563";
+		rtc-irq-gpio = <&gpio0 RK_PC7 IRQ_TYPE_EDGE_FALLING>;
+	};
+};
+
+&rk809 {
+	rk809_rtc: rtc {
+		status = "disabled";
+	};
+};
+
+&gmac0 {
+	tx_delay = <0x42>;
+	rx_delay = <0x34>;
+};
+
+&gmac1 {
+	tx_delay = <0x4a>;
+	rx_delay = <0x31>;
+};
+
+&sys_led {
+	gpios = <&gpio1 RK_PA4 GPIO_ACTIVE_LOW>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sys_led_pin>;
+};
+
+&sys_led_pin {
+	rockchip,pins = <1 RK_PA4 RK_FUNC_GPIO &pcfg_pull_none>;
+};

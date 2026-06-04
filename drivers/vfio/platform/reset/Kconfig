@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config VFIO_PLATFORM_CALXEDAXGMAC_RESET
+	tristate "VFIO support for calxeda xgmac reset"
+	help
+	  Enables the VFIO platform driver to handle reset for Calxeda xgmac
+
+	  If you don't know what to do here, say N.
+
+config VFIO_PLATFORM_AMDXGBE_RESET
+	tristate "VFIO support for AMD XGBE reset"
+	help
+	  Enables the VFIO platform driver to handle reset for AMD XGBE
+
+	  If you don't know what to do here, say N.
+
+config VFIO_PLATFORM_RK3588_NPU_RESET
+	tristate "VFIO support for RK3588 NPU reset"
+	depends on ROCKCHIP_RKNPU || COMPILE_TEST
+	help
+	  Enables the VFIO platform driver to handle reset for RK3588 NPU.
+
+	  The RK3588 NPU requires a full power-cycle of its power islands
+	  (PD_NPUTOP / PD_NPU1 / PD_NPU2) to reset.  This driver uses the
+	  shared rknpu_hw_* API to perform the power-cycle sequence.
+
+	  If you don't know what to do here, say N.
+
+config VFIO_PLATFORM_BCMFLEXRM_RESET
+	tristate "VFIO support for Broadcom FlexRM reset"
+	depends on ARCH_BCM_IPROC || COMPILE_TEST
+	default ARCH_BCM_IPROC
+	help
+	  Enables the VFIO platform driver to handle reset for Broadcom FlexRM
+
+	  If you don't know what to do here, say N.
