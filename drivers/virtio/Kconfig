@@ -145,6 +145,15 @@ config VIRTIO_INPUT
 
 	 If unsure, say M.
 
+config VIRTIO_NPU
+	tristate "Virtio NPU driver"
+	depends on VIRTIO
+	help
+	 This driver provides an experimental virtio frontend for a virtual
+	 NPU device. The host side is implemented by kvmtool virtio-npu.
+
+	 If unsure, say N.
+
 config VIRTIO_MMIO
 	tristate "Platform bus driver for memory mapped virtio devices"
 	depends on HAS_IOMEM && HAS_DMA
