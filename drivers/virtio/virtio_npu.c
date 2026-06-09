@@ -147,6 +147,132 @@ static int virtio_npu_send_cmd(struct virtio_npu *vnpu,u32 cmd,u32 *value)
     return 0;
 }
 
+static int virtio_npu_infer(struct virtio_npu *vnpu,
+			    u32 cmd,
+			    u64 user_input,
+			    u32 input_len,
+			    u64 user_output,
+			    u32 output_len,
+			    u32 *status,
+			    u32 *actual_output_len)
+{
+	struct virtio_npu_req_ctx *ctx;
+	struct scatterlist req_sg, input_sg, resp_sg, output_sg;
+	struct scatterlist *sgs[4];
+	void *input_buf = NULL;
+	void *output_buf = NULL;
+	int ret;
+
+	if (!user_input || !user_output)
+		return -EINVAL;
+	if (!input_len || !output_len)
+		return -EINVAL;
+	if (!status || !actual_output_len)
+		return -EINVAL;
+	if (input_len > VIRTIO_NPU_MAX_IO_SIZE ||
+	    output_len > VIRTIO_NPU_MAX_IO_SIZE)
+		return -EINVAL;
+
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+
+	input_buf = kmalloc(input_len, GFP_KERNEL);
+	if (!input_buf) {
+		ret = -ENOMEM;
+		goto err_free_ctx;
+	}
+
+	output_buf = kmalloc(output_len, GFP_KERNEL);
+	if (!output_buf) {
+		ret = -ENOMEM;
+		goto err_free_input;
+	}
+
+	if (copy_from_user(input_buf, (void __user *)(unsigned long)user_input,
+			   input_len)) {
+		ret = -EFAULT;
+		goto err_free_output;
+	}
+
+	init_completion(&ctx->done);
+	ctx->req.cmd = cpu_to_le32(cmd);
+	ctx->req.flags = 0;
+	ctx->req.input_len = cpu_to_le32(input_len);
+	ctx->req.output_len = cpu_to_le32(output_len);
+
+	sg_init_one(&req_sg, &ctx->req, sizeof(ctx->req));
+	sg_init_one(&input_sg, input_buf, input_len);
+	sg_init_one(&resp_sg, &ctx->resp, sizeof(ctx->resp));
+	sg_init_one(&output_sg, output_buf, output_len);
+
+	sgs[0] = &req_sg;
+	sgs[1] = &input_sg;
+	sgs[2] = &resp_sg;
+	sgs[3] = &output_sg;
+
+	mutex_lock(&vnpu->lock);
+	ret = virtqueue_add_sgs(vnpu->vq, sgs, 2, 2, ctx, GFP_KERNEL);
+	if (ret) {
+		mutex_unlock(&vnpu->lock);
+		goto err_free_output;
+	}
+
+	virtqueue_kick(vnpu->vq);
+	mutex_unlock(&vnpu->lock);
+
+	wait_for_completion(&ctx->done);
+	if (ctx->used_len < sizeof(ctx->resp)) {
+		ret = -EIO;
+		goto err_free_output;
+	}
+
+	*status = le32_to_cpu(ctx->resp.status);
+	*actual_output_len = le32_to_cpu(ctx->resp.value);
+	if (*status != VIRTIO_NPU_STATUS_OK) {
+		ret = -EIO;
+		goto err_free_output;
+	}
+	if (*actual_output_len > output_len) {
+		ret = -EIO;
+		goto err_free_output;
+	}
+	if (copy_to_user((void __user *)(unsigned long)user_output,
+			 output_buf, *actual_output_len)) {
+		ret = -EFAULT;
+		goto err_free_output;
+	}
+	ret = 0;
+
+err_free_output:
+	kfree(output_buf);
+err_free_input:
+	kfree(input_buf);
+err_free_ctx:
+	kfree(ctx);
+	return ret;
+}
+
+static int virtio_npu_infer_dummy(struct virtio_npu *vnpu,
+				  struct virtio_npu_ioc_infer_dummy *infer)
+{
+	return virtio_npu_infer(vnpu, VIRTIO_NPU_CMD_INFER_DUMMY,
+				infer->input, infer->input_len,
+				infer->output, infer->output_len,
+				&infer->status, &infer->actual_output_len);
+}
+
+static int virtio_npu_infer_raw(struct virtio_npu *vnpu,
+				struct virtio_npu_ioc_infer_raw *infer)
+{
+	return virtio_npu_infer(vnpu, VIRTIO_NPU_CMD_INFER_RAW,
+				infer->input, infer->input_len,
+				infer->output, infer->output_len,
+				&infer->status, &infer->actual_output_len);
+}
+
+
+
 
 
 static int virtio_npu_probe(struct virtio_device *vdev)
@@ -227,6 +353,9 @@ static struct virtio_driver virtio_npu_driver = {
 
 
 
+
+//字符设备层
+
 static long virtio_npu_ioctl(struct file *file,unsigned int cmd,unsigned long arg)
 {
     struct virtio_npu *vnpu;
@@ -259,6 +388,37 @@ static long virtio_npu_ioctl(struct file *file,unsigned int cmd,unsigned long ar
             if(copy_to_user((void __user *)arg,&data,sizeof(data)))
                 return -EFAULT;
             return 0;
+        case VIRTIO_NPU_IOC_INFER_DUMMY:{
+            /*
+                用户态传进来 arg
+                -> kernel 拷贝成 infer
+                -> virtio_npu_infer_dummy 修改 infer.status / infer.actual_output_len
+                -> kernel 把 infer 拷回用户态
+            */
+            struct virtio_npu_ioc_infer_dummy infer_data;
+            if (copy_from_user(&infer_data, (void __user *)arg, sizeof(infer_data)))
+                return -EFAULT;
+            ret = virtio_npu_infer_dummy(vnpu, &infer_data);
+            if (ret)
+                return ret;
+            if (copy_to_user((void __user *)arg, &infer_data, sizeof(infer_data)))
+                return -EFAULT;
+            return 0;
+        }
+        case VIRTIO_NPU_IOC_INFER_RAW:{
+            struct virtio_npu_ioc_infer_raw infer_data;
+
+            if (copy_from_user(&infer_data, (void __user *)arg,
+                               sizeof(infer_data)))
+                return -EFAULT;
+            ret = virtio_npu_infer_raw(vnpu, &infer_data);
+            if (ret)
+                return ret;
+            if (copy_to_user((void __user *)arg, &infer_data,
+                             sizeof(infer_data)))
+                return -EFAULT;
+            return 0;
+        }
 
         default:
             return -EINVAL;
