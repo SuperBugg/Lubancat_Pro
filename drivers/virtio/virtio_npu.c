@@ -271,8 +271,92 @@ static int virtio_npu_infer_raw(struct virtio_npu *vnpu,
 				&infer->status, &infer->actual_output_len);
 }
 
+static int virtio_npu_load_model(struct virtio_npu *vnpu,
+    struct virtio_npu_ioc_load_model *load)
+{
+    struct virtio_npu_req_ctx *ctx;
+    //请求，模型，响应
+    struct scatterlist req_sg, model_sg, resp_sg;
+    struct scatterlist *sgs[3];
+    void *model = NULL;
+    int ret;
 
+    if (!load->model)
+        return -EINVAL;
+    if (!load->model_len)
+        return -EINVAL;
 
+    ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+    if (!ctx)
+        return -ENOMEM;
+
+    model = kmalloc(load->model_len, GFP_KERNEL);
+    if (!model) {
+        ret = -ENOMEM;
+        goto err_free_ctx;
+    }
+
+    //这里用户态传进来的模型数据，先拷贝到 kernel buffer 里，再通过 virtio descriptor 发给 kvmtool。
+    if (copy_from_user(model, (void __user *)(unsigned long)load->model,
+                       load->model_len)) {
+        ret = -EFAULT;
+        goto err_free_model;
+    }
+
+    init_completion(&ctx->done);
+    ctx->req.cmd = cpu_to_le32(VIRTIO_NPU_CMD_LOAD_MODEL);
+    ctx->req.flags = 0;
+    ctx->req.input_len = cpu_to_le32(load->model_len);
+    ctx->req.output_len = cpu_to_le32(sizeof(ctx->resp));
+
+    sg_init_one(&req_sg, &ctx->req, sizeof(ctx->req));
+    sg_init_one(&model_sg, model, load->model_len);
+    sg_init_one(&resp_sg, &ctx->resp, sizeof(ctx->resp));
+
+    sgs[0] = &req_sg;
+    sgs[1] = &model_sg;
+    sgs[2] = &resp_sg;
+
+    mutex_lock(&vnpu->lock);
+    /*
+        把这次请求挂进virtqueue:
+            decs table填好
+            avail ring 放入 head
+            avail idx++
+    */
+    ret = virtqueue_add_sgs(vnpu->vq, sgs, 2, 1, ctx, GFP_KERNEL);
+    if (ret) {
+        mutex_unlock(&vnpu->lock);
+        goto err_free_model;
+    }
+    //通知kvmtool有新的请求了
+    virtqueue_kick(vnpu->vq);
+    mutex_unlock(&vnpu->lock);
+
+    wait_for_completion(&ctx->done);
+
+    if (ctx->used_len < sizeof(ctx->resp)) {
+        ret = -EIO;
+        goto err_free_model;
+    }
+    
+    load->status = le32_to_cpu(ctx->resp.status);
+    load->model_handle = le32_to_cpu(ctx->resp.value);
+
+    if (load->status != VIRTIO_NPU_STATUS_OK) {
+        ret = -EIO;
+        goto err_free_model;
+    }
+
+    ret = 0;
+
+err_free_model:
+	kfree(model);
+err_free_ctx:
+	kfree(ctx);
+	return ret;   
+    
+}
 
 
 static int virtio_npu_probe(struct virtio_device *vdev)
@@ -416,6 +500,18 @@ static long virtio_npu_ioctl(struct file *file,unsigned int cmd,unsigned long ar
                 return ret;
             if (copy_to_user((void __user *)arg, &infer_data,
                              sizeof(infer_data)))
+                return -EFAULT;
+            return 0;
+        }
+        case VIRTIO_NPU_IOC_LOAD_MODEL:{
+            struct virtio_npu_ioc_load_model load_data;
+            if (copy_from_user(&load_data, (void __user *)arg,
+                               sizeof(load_data)))
+                return -EFAULT;
+            ret = virtio_npu_load_model(vnpu, &load_data);
+            if (ret)
+                return ret;
+            if (copy_to_user((void __user *)arg, &load_data, sizeof(load_data)))
                 return -EFAULT;
             return 0;
         }

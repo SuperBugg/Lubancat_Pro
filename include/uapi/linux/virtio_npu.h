@@ -9,6 +9,7 @@
 #define VIRTIO_NPU_CMD_PING		2
 #define VIRTIO_NPU_CMD_INFER_DUMMY	3
 #define VIRTIO_NPU_CMD_INFER_RAW	4
+#define VIRTIO_NPU_CMD_LOAD_MODEL	5
 
 #define VIRTIO_NPU_STATUS_OK		0
 #define VIRTIO_NPU_STATUS_UNSUPP	1
@@ -53,6 +54,13 @@ struct virtio_npu_ioc_infer_raw {
 	__u32 actual_output_len;
 };
 
+struct virtio_npu_ioc_load_model {
+	__u64 model;
+	__u32 model_len;
+	__u32 status;
+	__u32 model_handle;
+};
+
 
 #define VIRTIO_NPU_IOC_MAGIC		'N'
 #define VIRTIO_NPU_IOC_PING \
@@ -65,5 +73,8 @@ struct virtio_npu_ioc_infer_raw {
 
 #define VIRTIO_NPU_IOC_INFER_RAW \
 	_IOWR(VIRTIO_NPU_IOC_MAGIC, 0x04, struct virtio_npu_ioc_infer_raw)
+
+#define VIRTIO_NPU_IOC_LOAD_MODEL \
+	_IOWR(VIRTIO_NPU_IOC_MAGIC, 0x05, struct virtio_npu_ioc_load_model)
 
 #endif /* _UAPI_LINUX_VIRTIO_NPU_H */
